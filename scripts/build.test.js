@@ -7,8 +7,6 @@ const { test } = require('node:test');
 
 const build = require('./build');
 
-const EXPECTED_SOURCE_SHA256 = 'edeb66ad8739fcae5c8c17b29d74b843de932ad60b9e4750205e175f92920cb0';
-
 function makePeBuffer(machine) {
     const buffer = Buffer.alloc(128);
     buffer.writeUInt16LE(0x5a4d, 0);
@@ -27,20 +25,9 @@ function writeTemp(buffer) {
 
 function validEnv() {
     return {
-        GITHUB_REPOSITORY: 'A5Labs-Prime/wptg-gpu-metrics-addon',
-        GITHUB_SHA: '806d0be0000000000000000000000000000000ab',
-        GITHUB_SERVER_URL: 'https://github.com',
-        GITHUB_RUN_ID: '123456'
+        GITHUB_SHA: '806d0be0000000000000000000000000000000ab'
     };
 }
-
-test('sourceSha256 matches the fingerprint shipped from the client', () => {
-    assert.equal(build.sourceSha256(), EXPECTED_SOURCE_SHA256);
-});
-
-test('sourceSha256 hashes binding.gyp before gpu_metrics.cc', () => {
-    assert.deepEqual(build.SOURCE_FILES, ['binding.gyp', 'gpu_metrics.cc']);
-});
 
 test('assertPe accepts a well-formed x64 PE', () => {
     const file = writeTemp(makePeBuffer(0x8664));
@@ -98,30 +85,25 @@ test('parseArgs rejects a repeated target', () => {
     );
 });
 
-test('readProvenance builds the release tag from the target and short commit', () => {
-    const provenance = build.readProvenance(validEnv(), '44.3.0');
-    assert.equal(provenance.releaseTag, 'electron-44.3.0-806d0be');
-    assert.equal(provenance.repo, 'A5Labs-Prime/wptg-gpu-metrics-addon');
+test('readProvenance returns the GITHUB_SHA commit as-is', () => {
+    const provenance = build.readProvenance(validEnv());
     assert.equal(provenance.commit, '806d0be0000000000000000000000000000000ab');
-    assert.equal(
-        provenance.runUrl,
-        'https://github.com/A5Labs-Prime/wptg-gpu-metrics-addon/actions/runs/123456'
-    );
 });
 
-test('readProvenance rejects a missing environment variable', () => {
+test('readProvenance falls back to the local git commit when GITHUB_SHA is absent', () => {
     const env = validEnv();
-    delete env.GITHUB_RUN_ID;
-    assert.throws(() => build.readProvenance(env, '44.3.0'), /GITHUB_RUN_ID/);
+    delete env.GITHUB_SHA;
+    const provenance = build.readProvenance(env);
+    assert.match(provenance.commit, /^[0-9a-f]{40}$/);
 });
 
 test('readProvenance rejects a short commit', () => {
     const env = validEnv();
     env.GITHUB_SHA = '806d0be';
-    assert.throws(() => build.readProvenance(env, '44.3.0'), /not a 40-character commit/);
+    assert.throws(() => build.readProvenance(env), /not a 40-character sha/);
 });
 
-test('buildManifest emits schemaVersion 2 without packageVersion', () => {
+test('buildManifest emits schemaVersion 2 without a source fingerprint', () => {
     const artifacts = {
         'win32-x64': {
             path: 'win32-x64/gpu-metrics.node',
@@ -130,14 +112,14 @@ test('buildManifest emits schemaVersion 2 without packageVersion', () => {
             peMachine: '0x8664'
         }
     };
-    const manifest = build.buildManifest('44.3.0', build.readProvenance(validEnv(), '44.3.0'), artifacts);
+    const manifest = build.buildManifest('44.3.0', build.readProvenance(validEnv()), artifacts);
     assert.equal(manifest.schemaVersion, 2);
     assert.equal(manifest.electronTarget, '44.3.0');
-    assert.equal(manifest.sourceSha256, EXPECTED_SOURCE_SHA256);
-    assert.deepEqual(manifest.sourceFiles, ['binding.gyp', 'gpu_metrics.cc']);
-    assert.equal(manifest.source.releaseTag, 'electron-44.3.0-806d0be');
+    assert.equal(manifest.source.commit, '806d0be0000000000000000000000000000000ab');
     assert.deepEqual(manifest.artifacts, artifacts);
-    assert.equal('packageVersion' in manifest, false);
+    assert.equal('sourceSha256' in manifest, false);
+    assert.equal('sourceFiles' in manifest, false);
+    assert.equal('releaseTag' in manifest.source, false);
 });
 
 test('the CLI refuses to run off Windows and leaves dist untouched', { skip: process.platform === 'win32' }, () => {

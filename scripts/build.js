@@ -9,10 +9,8 @@ const ROOT = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT, 'dist');
 const PAYLOAD_DIR = path.join(DIST_DIR, 'payload');
 const ELECTRON_HEADERS = 'https://electronjs.org/headers';
-const SOURCE_FILES = ['binding.gyp', 'gpu_metrics.cc'];
 const TARGETS = [{ arch: 'x64', machine: 0x8664 }];
 const ELECTRON_TARGET_PATTERN = /^\d+\.\d+\.\d+$/;
-const PROVENANCE_VARIABLES = ['GITHUB_REPOSITORY', 'GITHUB_SHA', 'GITHUB_SERVER_URL', 'GITHUB_RUN_ID'];
 
 function parseArgs(argv) {
     let electronTarget = null;
@@ -31,23 +29,20 @@ function parseArgs(argv) {
     return { electronTarget };
 }
 
-function readProvenance(env, electronTarget) {
-    const missing = PROVENANCE_VARIABLES.filter((name) => !env[name]);
-    if (missing.length > 0) {
-        throw new Error(
-            `missing GitHub Actions environment (${missing.join(', ')}); ` +
-                'a local build cannot produce a releasable manifest'
-        );
+function readLocalCommit() {
+    const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+    if (result.status !== 0 || !result.stdout) {
+        throw new Error('unable to resolve a commit: not running in GitHub Actions and not a git checkout');
     }
-    if (!/^[0-9a-f]{40}$/.test(env.GITHUB_SHA)) {
-        throw new Error(`GITHUB_SHA is not a 40-character commit: ${env.GITHUB_SHA}`);
+    return result.stdout.trim();
+}
+
+function readProvenance(env) {
+    const commit = env.GITHUB_SHA || readLocalCommit();
+    if (!/^[0-9a-f]{40}$/.test(commit)) {
+        throw new Error(`commit is not a 40-character sha: ${commit}`);
     }
-    return {
-        repo: env.GITHUB_REPOSITORY,
-        commit: env.GITHUB_SHA,
-        releaseTag: `electron-${electronTarget}-${env.GITHUB_SHA.slice(0, 7)}`,
-        runUrl: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
-    };
+    return { commit };
 }
 
 function assertPe(file, expectedMachine) {
@@ -67,22 +62,10 @@ function sha256File(file) {
     return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-function sourceSha256() {
-    const hash = crypto.createHash('sha256');
-    for (const relativePath of SOURCE_FILES) {
-        hash.update(relativePath + '\u0000');
-        hash.update(fs.readFileSync(path.join(ROOT, relativePath)));
-        hash.update('\u0000');
-    }
-    return hash.digest('hex');
-}
-
 function buildManifest(electronTarget, provenance, artifacts) {
     return {
         schemaVersion: 2,
         electronTarget,
-        sourceSha256: sourceSha256(),
-        sourceFiles: SOURCE_FILES,
         source: provenance,
         artifacts
     };
@@ -108,7 +91,7 @@ function compile(electronTarget, arch) {
 function main(argv, env) {
     const { electronTarget } = parseArgs(argv);
     if (process.platform !== 'win32') throw new Error('Windows is required to build the native addon');
-    const provenance = readProvenance(env, electronTarget);
+    const provenance = readProvenance(env);
 
     fs.rmSync(DIST_DIR, { recursive: true, force: true });
     fs.mkdirSync(PAYLOAD_DIR, { recursive: true });
@@ -136,7 +119,7 @@ function main(argv, env) {
 
     const manifest = buildManifest(electronTarget, provenance, artifacts);
     fs.writeFileSync(path.join(PAYLOAD_DIR, 'manifest.json'), JSON.stringify(manifest, null, 4) + '\n');
-    console.log(`[gpu-metrics] wrote manifest for ${manifest.source.releaseTag}`);
+    console.log(`[gpu-metrics] wrote manifest for electron ${manifest.electronTarget} (${manifest.source.commit.slice(0, 7)})`);
 }
 
 if (require.main === module) {
@@ -153,10 +136,8 @@ module.exports = {
     readProvenance,
     assertPe,
     sha256File,
-    sourceSha256,
     buildManifest,
     TARGETS,
-    SOURCE_FILES,
     ROOT,
     DIST_DIR,
     PAYLOAD_DIR

@@ -1,7 +1,8 @@
 # WPTG GPU metrics addon
 
 `gpu_metrics.cc` 的單一真相。這個 repo 只做兩件事：在 GitHub Actions 上把它編成 Windows x64 的 N-API
-二進位檔，並把結果發成 GitHub release。它不驗證產物的完整性，也不保存產物 —— 驗證在 client 端進行。
+二進位檔，並把結果上傳成 workflow artifact。它不驗證產物的完整性 —— 驗證在 client 端進行；
+artifact 由 GitHub 暫存 90 天後自動清除，不是永久保存。
 
 ## 這顆 addon 是什麼
 
@@ -15,20 +16,25 @@ adapter，把 LUID 對應到 PCI vendor/device ID。Electron 與 Chromium 沒有
 
 1. 到 Actions 頁面選 **Build Windows x64 prebuild**
 2. 點 **Run workflow**，在 `electronTarget` 填入目標 Electron 版本，例如 `44.3.0`
-3. 完成後會建立一個 release，tag 為 `electron-<版本>-<source commit 前 7 碼>`
+3. 完成後到該次 workflow run 的 **Artifacts** 區塊下載 `gpu-metrics-electron-<版本>-win32-x64`
 
-release 帶有單一 asset `gpu-metrics-electron-<版本>-win32-x64.zip`，解開後結構為：
+這個 artifact 沒有另外打包成 zip——上傳的是 `dist/payload/` 整個資料夾，GitHub 下載時會自動包成 zip，
+解開後結構為：
 
     win32-x64/gpu-metrics.node
     manifest.json
+
+artifact 保留 90 天（`retention-days: 90`），過期後 GitHub 會自動刪除，無法回頭再下載同一次建置的產物，
+必須重新 dispatch 一次。
 
 ## 版號怎麼決定
 
 repo 內不儲存 Electron 版號。要哪個版本就 dispatch 哪個版本，因此**不可能在不重新編譯的情況下產生一份
 標示新版號的 manifest**。這是刻意的設計。
 
-同一個 Electron 版本若因源碼變更需要重出，tag 會因 source commit 不同而唯一。tag 已存在時 CI 直接失敗，
-不覆蓋已發佈的產物；要重出同一組合必須先手動刪除該 release。
+每次 dispatch 都是獨立的 workflow run、獨立的 artifact，同一個 Electron 版本要重出幾次都可以，
+不會有「名稱已存在」需要手動處理的情況——這也是拿掉 GitHub Release 之後，原本 tag 唯一性設計跟著
+一起消失的部分。
 
 ## manifest
 
@@ -37,26 +43,23 @@ repo 內不儲存 Electron 版號。要哪個版本就 dispatch 哪個版本，�
 | 欄位 | 意義 |
 | --- | --- |
 | `electronTarget` | 編譯目標的 Electron 版本 |
-| `sourceSha256` | `binding.gyp` 與 `gpu_metrics.cc` 的串接指紋 |
-| `sourceFiles` | 參與指紋計算的檔案與順序 |
-| `source.repo` / `source.commit` / `source.releaseTag` / `source.runUrl` | 建置出處，取自 runner 環境變數 |
+| `source.commit` | 建置出處的 commit，`GITHUB_SHA` 缺席時退回本機 `git rev-parse HEAD` |
 | `artifacts["win32-x64"]` | `path` / `sizeBytes` / `sha256` / `peMachine` |
-
-Actions 的執行紀錄會過期，因此要核對一份 manifest 的真偽時，比對的對象是 release notes 而不是 `source.runUrl`。
 
 ## 本機執行
 
 `scripts/build.js` 在非 Windows 上會立即失敗，且平台檢查排在清空 `dist/` 之前，因此不會誤刪任何東西。
-即使在 Windows 上，缺少 `GITHUB_*` 環境變數時也會失敗 —— 本機建置不得產出看似可發佈的 manifest。
+
+在 Windows 上可以本機編譯（例如開發時測試 `gpu_metrics.cc` 的改動）：不需要 `GITHUB_*` 環境變數，
+commit 會退回本機 `git rev-parse HEAD`。但本機建置只做到產出 `dist/payload/`，實際上傳成 artifact
+仍只透過 GitHub Actions 的 workflow 完成。
 
 單元測試不需要 Windows：
 
     npm ci
     npm test
 
-測試涵蓋參數解析、PE 標頭驗證、provenance 組裝，以及源碼指紋是否仍等於
-`edeb66ad8739fcae5c8c17b29d74b843de932ad60b9e4750205e175f92920cb0`。**源碼變更時必須同步更新
-`scripts/build.test.js` 裡的這個期望值**，否則測試會失敗。
+測試涵蓋參數解析、PE 標頭驗證，以及 provenance 組裝。
 
 ## 新增架構目標
 
@@ -66,4 +69,5 @@ client 端的驗證也有一份對應的 `TARGETS`，兩邊要一起改。
 ## 消費端
 
 `wptg-electron-multi-table` 的 `ts/modules/diagnostics-module/native/gpu-metrics/prebuilds/`。
-升版程序記錄在該目錄的 README。
+升版程序記錄在該目錄的 README——但那份文件如果還是照著「去 Release 頁面抓某個 tag」寫的，
+需要跟著改成「去對應 workflow run 的 Artifacts 區塊下載，且 90 天內要抓」，這邊沒有一併改。
