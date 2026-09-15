@@ -1,0 +1,61 @@
+name: Build Windows x64 prebuild
+
+on:
+    workflow_dispatch:
+        inputs:
+            electronTarget:
+                description: 'Electron version, e.g. 44.3.0'
+                required: true
+                type: string
+
+permissions:
+    contents: write
+
+jobs:
+    unit:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '22.23.2'
+                  cache: npm
+            - run: npm ci
+            - run: npm test
+
+    build:
+        needs: unit
+        runs-on: windows-2022
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '22.23.2'
+                  cache: npm
+            - run: npm ci
+            - run: npm test
+            - name: Build
+              shell: pwsh
+              env:
+                  ELECTRON_TARGET: ${{ inputs.electronTarget }}
+              run: npm run build -- --electron-target=$env:ELECTRON_TARGET
+            - name: Package and release
+              shell: pwsh
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  $manifest = Get-Content dist/payload/manifest.json -Raw | ConvertFrom-Json
+                  $tag = $manifest.source.releaseTag
+                  $asset = "dist/gpu-metrics-electron-$($manifest.electronTarget)-win32-x64.zip"
+                  $target = $manifest.source.commit
+                  Compress-Archive -Path dist/payload/* -DestinationPath $asset
+                  $notes = @(
+                      "Electron $($manifest.electronTarget) / win32-x64",
+                      "source commit $($manifest.source.commit)",
+                      "source sha256 $($manifest.sourceSha256)",
+                      "artifact sha256 $($manifest.artifacts.'win32-x64'.sha256)"
+                  ) -join "`n"
+                  gh release create $tag $asset --target $target --title $tag --notes $notes --draft
+                  gh release edit $tag --draft=false
