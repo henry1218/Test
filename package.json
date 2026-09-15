@@ -1,0 +1,17 @@
+{
+    "name": "wptg-gpu-metrics-addon",
+    "private": true,
+    "description": "Windows x64 N-API GPU metrics addon for the WPTG desktop client",
+    "license": "UNLICENSED",
+    "scripts": {
+        "build": "node scripts/build.js",
+        "test": "node --test scripts/build.test.js"
+    },
+    "dependencies": {
+        "node-addon-api": "7.1.1",
+        "node-gyp": "11.5.0"
+    },
+    "engines": {
+        "node": ">=22 <23"
+    }
+}
