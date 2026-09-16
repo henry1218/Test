@@ -38,28 +38,40 @@ repo 內不儲存 Electron 版號。要哪個版本就 dispatch 哪個版本，�
 
 ## manifest
 
-`manifest.json` 為 `schemaVersion: 2`，欄位：
+`manifest.json` 只有一個欄位：
 
 | 欄位 | 意義 |
 | --- | --- |
 | `electronTarget` | 編譯目標的 Electron 版本 |
-| `source.commit` | 建置出處的 commit，`GITHUB_SHA` 缺席時退回本機 `git rev-parse HEAD` |
-| `artifacts["win32-x64"]` | `path` / `sizeBytes` / `sha256` / `peMachine` |
+
+    {
+        "electronTarget": "44.3.0"
+    }
+
+這個值也出現在 artifact 名稱裡，但一旦解壓後把資料夾複製到別處，名稱就不在了，manifest 是唯一跟著
+檔案走的紀錄。
+
+manifest 刻意不帶 schema 版號。欄位只有一個時，consumer 直接檢查 `electronTarget` 在不在、格式對不對，
+比先讀版號再決定怎麼解析更簡單也更可靠。代價是往後**只能做加法** —— 要擴充就加 optional 欄位，
+不改名、不刪除，這樣舊 consumer 讀新 manifest 永遠不會壞。真的需要破壞性變更時，得另外安排一次
+與 consumer 同步的切換，沒有版號可以擋。
+
+產物的完整性（大小、sha256、PE machine）不記在 manifest 裡 —— 建置時 `assertPe` 會驗 PE 標頭，
+sha256 印在 workflow log，實際驗證在 client 端進行。
 
 ## 本機執行
 
 `scripts/build.js` 在非 Windows 上會立即失敗，且平台檢查排在清空 `dist/` 之前，因此不會誤刪任何東西。
 
-在 Windows 上可以本機編譯（例如開發時測試 `gpu_metrics.cc` 的改動）：不需要 `GITHUB_*` 環境變數，
-commit 會退回本機 `git rev-parse HEAD`。但本機建置只做到產出 `dist/payload/`，實際上傳成 artifact
-仍只透過 GitHub Actions 的 workflow 完成。
+在 Windows 上可以本機編譯（例如開發時測試 `gpu_metrics.cc` 的改動）：不需要任何環境變數。
+但本機建置只做到產出 `dist/payload/`，實際上傳成 artifact 仍只透過 GitHub Actions 的 workflow 完成。
 
 單元測試不需要 Windows：
 
     npm ci
     npm test
 
-測試涵蓋參數解析、PE 標頭驗證，以及 provenance 組裝。
+測試涵蓋參數解析、PE 標頭驗證，以及 manifest 組裝。
 
 ## 新增架構目標
 
@@ -71,3 +83,8 @@ client 端的驗證也有一份對應的 `TARGETS`，兩邊要一起改。
 `wptg-electron-multi-table` 的 `ts/modules/diagnostics-module/native/gpu-metrics/prebuilds/`。
 升版程序記錄在該目錄的 README——但那份文件如果還是照著「去 Release 頁面抓某個 tag」寫的，
 需要跟著改成「去對應 workflow run 的 Artifacts 區塊下載，且 90 天內要抓」，這邊沒有一併改。
+
+**manifest 欄位已變動，client 端需同步確認。** 原本的 `schemaVersion`、`source.commit` 以及
+`artifacts["win32-x64"]`（含 `sha256`、`sizeBytes`、`peMachine`）都已移除，現在只剩 `electronTarget`。
+client 端如果有讀這些欄位或做 `schemaVersion` 檢查，會拿到 `undefined`，需要一併調整；原本依賴
+manifest 內 `sha256` 做完整性驗證的部分，得改用其他來源。

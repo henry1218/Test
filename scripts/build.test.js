@@ -23,12 +23,6 @@ function writeTemp(buffer) {
     return file;
 }
 
-function validEnv() {
-    return {
-        GITHUB_SHA: '806d0be0000000000000000000000000000000ab'
-    };
-}
-
 test('assertPe accepts a well-formed x64 PE', () => {
     const file = writeTemp(makePeBuffer(0x8664));
     assert.doesNotThrow(() => build.assertPe(file, 0x8664));
@@ -85,48 +79,15 @@ test('parseArgs rejects a repeated target', () => {
     );
 });
 
-test('readProvenance returns the GITHUB_SHA commit as-is', () => {
-    const provenance = build.readProvenance(validEnv());
-    assert.equal(provenance.commit, '806d0be0000000000000000000000000000000ab');
-});
-
-test('readProvenance falls back to the local git commit when GITHUB_SHA is absent', () => {
-    const env = validEnv();
-    delete env.GITHUB_SHA;
-    const provenance = build.readProvenance(env);
-    assert.match(provenance.commit, /^[0-9a-f]{40}$/);
-});
-
-test('readProvenance rejects a short commit', () => {
-    const env = validEnv();
-    env.GITHUB_SHA = '806d0be';
-    assert.throws(() => build.readProvenance(env), /not a 40-character sha/);
-});
-
-test('buildManifest emits schemaVersion 2 without a source fingerprint', () => {
-    const artifacts = {
-        'win32-x64': {
-            path: 'win32-x64/gpu-metrics.node',
-            sizeBytes: 308224,
-            sha256: 'a'.repeat(64),
-            peMachine: '0x8664'
-        }
-    };
-    const manifest = build.buildManifest('44.3.0', build.readProvenance(validEnv()), artifacts);
-    assert.equal(manifest.schemaVersion, 2);
-    assert.equal(manifest.electronTarget, '44.3.0');
-    assert.equal(manifest.source.commit, '806d0be0000000000000000000000000000000ab');
-    assert.deepEqual(manifest.artifacts, artifacts);
-    assert.equal('sourceSha256' in manifest, false);
-    assert.equal('sourceFiles' in manifest, false);
-    assert.equal('releaseTag' in manifest.source, false);
+test('buildManifest emits only the electron target', () => {
+    const manifest = build.buildManifest('44.3.0');
+    assert.deepEqual(manifest, { electronTarget: '44.3.0' });
 });
 
 test('the CLI refuses to run off Windows and leaves dist untouched', { skip: process.platform === 'win32' }, () => {
     const script = path.join(__dirname, 'build.js');
     const result = spawnSync(process.execPath, [script, '--electron-target=44.3.0'], {
         cwd: build.ROOT,
-        env: { ...process.env, ...validEnv() },
         encoding: 'utf8'
     });
     assert.equal(result.status, 1);

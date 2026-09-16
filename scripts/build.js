@@ -29,22 +29,6 @@ function parseArgs(argv) {
     return { electronTarget };
 }
 
-function readLocalCommit() {
-    const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
-    if (result.status !== 0 || !result.stdout) {
-        throw new Error('unable to resolve a commit: not running in GitHub Actions and not a git checkout');
-    }
-    return result.stdout.trim();
-}
-
-function readProvenance(env) {
-    const commit = env.GITHUB_SHA || readLocalCommit();
-    if (!/^[0-9a-f]{40}$/.test(commit)) {
-        throw new Error(`commit is not a 40-character sha: ${commit}`);
-    }
-    return { commit };
-}
-
 function assertPe(file, expectedMachine) {
     const binary = fs.readFileSync(file);
     if (binary.length < 64 || binary.readUInt16LE(0) !== 0x5a4d) throw new Error(`${file} is not a PE binary`);
@@ -62,13 +46,8 @@ function sha256File(file) {
     return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-function buildManifest(electronTarget, provenance, artifacts) {
-    return {
-        schemaVersion: 2,
-        electronTarget,
-        source: provenance,
-        artifacts
-    };
+function buildManifest(electronTarget) {
+    return { electronTarget };
 }
 
 function compile(electronTarget, arch) {
@@ -88,15 +67,13 @@ function compile(electronTarget, arch) {
     if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-function main(argv, env) {
+function main(argv) {
     const { electronTarget } = parseArgs(argv);
     if (process.platform !== 'win32') throw new Error('Windows is required to build the native addon');
-    const provenance = readProvenance(env);
 
     fs.rmSync(DIST_DIR, { recursive: true, force: true });
     fs.mkdirSync(PAYLOAD_DIR, { recursive: true });
 
-    const artifacts = {};
     for (const { arch, machine } of TARGETS) {
         compile(electronTarget, arch);
         const built = path.join(ROOT, 'build', 'Release', 'gpu-metrics.node');
@@ -108,23 +85,17 @@ function main(argv, env) {
         fs.mkdirSync(path.dirname(output), { recursive: true });
         fs.copyFileSync(built, output);
 
-        artifacts[`win32-${arch}`] = {
-            path: relativePath,
-            sizeBytes: fs.statSync(output).size,
-            sha256: sha256File(output),
-            peMachine: `0x${machine.toString(16)}`
-        };
-        console.log(`[gpu-metrics] win32-${arch} ${artifacts[`win32-${arch}`].sha256}`);
+        console.log(`[gpu-metrics] win32-${arch} ${sha256File(output)}`);
     }
 
-    const manifest = buildManifest(electronTarget, provenance, artifacts);
+    const manifest = buildManifest(electronTarget);
     fs.writeFileSync(path.join(PAYLOAD_DIR, 'manifest.json'), JSON.stringify(manifest, null, 4) + '\n');
-    console.log(`[gpu-metrics] wrote manifest for electron ${manifest.electronTarget} (${manifest.source.commit.slice(0, 7)})`);
+    console.log(`[gpu-metrics] wrote manifest for electron ${manifest.electronTarget}`);
 }
 
 if (require.main === module) {
     try {
-        main(process.argv.slice(2), process.env);
+        main(process.argv.slice(2));
     } catch (error) {
         console.error(`[gpu-metrics] ${error.message}`);
         process.exit(1);
@@ -133,7 +104,6 @@ if (require.main === module) {
 
 module.exports = {
     parseArgs,
-    readProvenance,
     assertPe,
     sha256File,
     buildManifest,
